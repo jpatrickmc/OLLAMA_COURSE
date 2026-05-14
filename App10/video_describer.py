@@ -1,15 +1,14 @@
 # Title: Make a Video Describer
 #
 # Description:
-# This is a full project that combines everything we've learned so far.
-# It creates a "Video Describer" that can watch a video and tell you what happens in it.
+# This project creates a "Video Describer" that watches a video and tells you what happens in it.
 #
 # The Workflow:
 # 1. User uploads a video (Streamlit).
-# 2. We extract frames from the video (OpenCV), e.g., one image every 2 seconds.
-# 3. We ask a Vision Model (Llava) to describe EACH frame individually.
-# 4. We collect all these descriptions into a single text block.
-# 5. We ask a Language Model (Llama 2) to summarize these descriptions into one coherent story.
+# 2. We extract frames from the video (OpenCV), e.g., one image every 4 seconds.
+# 3. We ask a Vision Model (Llava) to describe each frame.
+# 4. We collect all descriptions into one text block.
+# 5. We ask a Language Model (Llama 2) to summarize into one coherent story.
 #
 # Installation:
 # pip install opencv-python ollama streamlit
@@ -17,115 +16,142 @@
 # How to run:
 # streamlit run video_describer.py
 
-import cv2          # For video processing (extracting frames)
-import ollama       # For AI (Llava for vision, Llama 2 for text)
-import streamlit as st  # For the Web UI
-import os           # For file path handling
+import os
+import tempfile
+
+import cv2
+import ollama
+import streamlit as st
+
 
 # --- Function 1: Extract Frames ---
-# This function extracts one frame every 4 seconds from the video.
+# Extract one frame every 4 seconds and return saved frame paths.
 def video_to_frames(video_path):
-    # Open the video file
     cap = cv2.VideoCapture(video_path)
 
-    # Check if the video opened successfully
     if not cap.isOpened():
-        print("Error: Could not open video.")
-        return
+        raise RuntimeError("Error: Could not open video.")
 
-    # Calculate frame skip interval (4 seconds worth of frames)
     fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_interval = int(fps * 4)
+    frame_interval = max(1, int(fps * 4))
 
     frame_count = 0
     saved_frame_count = 0
+    frame_paths = []
 
     while True:
         ret, frame = cap.read()
-        
-        # Stop loop if video ends
         if not ret:
             break
 
-        # If we are at the correct interval (0s, 2s, 4s...)
         if frame_count % frame_interval == 0:
             filename = f"frame_{saved_frame_count}.jpg"
-            
-            # Add the filename to our global list 'frames' so we can find them later
-            frames.append(filename)
-            
-            # Save the actual image file to disk
             cv2.imwrite(filename, frame)
-            
-            print(f"Saved {filename}")
+            frame_paths.append(filename)
             saved_frame_count += 1
 
         frame_count += 1
-        
-    print(frame_count)
-    cap.release() # Close the video file
-    print(f"Total frames saved: {saved_frame_count}")
+
+    cap.release()
+    return frame_paths
 
 
-# --- Function 2: Save Upload ---
-# Saves the uploaded video from Streamlit RAM to the hard drive.
-def save_uploaded_file(uploaded_file):
-    save_path = os.getcwd()
-    file_path = os.path.join(save_path, uploaded_file.name)
+st.title("Video Describer")
 
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+if "last_file_name" not in st.session_state:
+    st.session_state.last_file_name = None
+if "video_summary" not in st.session_state:
+    st.session_state.video_summary = None
+# Streamlit's file_uploader keeps widget state by key; rotating the key clears selection.
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
 
-    return st.success(f"Saved file: {uploaded_file.name} to {save_path}")
 
+def reset_app_state():
+    # Reset all user-facing results and force a clean uploader widget.
+    st.session_state.last_file_name = None
+    st.session_state.video_summary = None
+    st.session_state.uploader_key += 1
+    st.rerun()
 
-st.title("Video Describer!")
-
-# Allow user to upload an MP4 video
-uploaded_file = st.file_uploader("Choose an video", type=["mp4"])
+uploaded_file = st.file_uploader(
+    "Choose a video", type=["mp4"], key=f"video_uploader_{st.session_state.uploader_key}"
+)
 
 if uploaded_file is not None:
-    # 1. Save the video file locally
-    save_uploaded_file(uploaded_file)
-    print(uploaded_file.name)
-    print(type(uploaded_file.name))
-    
-    # Initialize an empty list to store frame filenames.
-    # Note: This list 'frames' is used inside the 'video_to_frames' function.
-    frames = []
-    
-    video_path = uploaded_file.name
-    
-    # 2. Extract frames from the video
-    # This populates the 'frames' list with filenames like 'frame_0.jpg', 'frame_1.jpg'.
-    video_to_frames(video_path)
-    
-    descriptions = ""
-    
-    # 3. Analyze each frame with Llava
-    for i in frames:
-        # st.image(i, caption='Uploaded Image.', use_column_width=True) # Optional: Show frame
-        
-        # Ask Llava to describe the current frame
-        response = ollama.chat(model='llava:7b',
-                               messages=[{'role': 'user',
-                                          'content': 'Describe the image with one sentence.',
-                                          'images': [i]}])
+    # New upload invalidates prior summary so users do not see stale output.
+    if st.session_state.last_file_name != uploaded_file.name:
+        st.session_state.last_file_name = uploaded_file.name
+        st.session_state.video_summary = None
 
-        # 4. Collect descriptions
-        # Append the new description to our long string of text.
-        # descriptions += "Frame 1: A man walking...\nFrame 2: He enters a door..."
-        descriptions += f"\n{response['message']['content']}\n"
-        # print(response['message']['content'])
+    col1, col2 = st.columns(2)
+    describe_clicked = col1.button("Describe Video")
+    reset_clicked = col2.button("Reset")
 
-    # 5. Summarize with Llama 2
-    # We now have a list of disjointed descriptions.
-    # We ask Llama 2 to read them all and write a smooth summary.
-    prompt = f"Write a general explaination about what is going on in the video by using the following descriptions of the frames of the video. \n {descriptions}"
-    
-    answer = ollama.generate(model='llama2',
-                             prompt=prompt)
+    if reset_clicked:
+        reset_app_state()
 
-    # 6. Display Result
-    st.markdown("Description of the video!")
-    st.markdown(answer["response"])
+    if describe_clicked:
+        frames = []
+        video_path = None
+        try:
+            print(f"Starting analysis for uploaded file: {uploaded_file.name}")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+                temp_video.write(uploaded_file.getbuffer())
+                video_path = temp_video.name
+
+            with st.spinner("Extracting frames and analyzing video..."):
+                frames = video_to_frames(video_path)
+                print(f"Extracted {len(frames)} frame(s) for analysis")
+
+                descriptions = ""
+                st.markdown("### Frame-by-frame breakdown")
+                for idx, frame_file in enumerate(frames, start=1):
+                    print(f"Analyzing frame {idx}/{len(frames)}: {frame_file}")
+                    response = ollama.chat(
+                        model="llava:7b",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": "Describe the image with one sentence.",
+                                "images": [frame_file],
+                            }
+                        ],
+                    )
+                    frame_description = response["message"]["content"]
+                    print(f"Frame {idx} description: {frame_description}")
+
+                    image = cv2.imread(frame_file)
+                    st.image(image, caption=f"Frame {idx}: {frame_file}", width=700)
+                    st.markdown(f"#### Description: {frame_description}")
+
+                    descriptions += f"\n{frame_description}\n"
+
+                prompt = (
+                    "Write a general explanation about what is going on in the video by "
+                    "using the following descriptions of the video frames.\n"
+                    f"{descriptions}"
+                )
+
+                answer = ollama.generate(model="llama2", prompt=prompt)
+                st.session_state.video_summary = answer["response"]
+                print("Video summary generated successfully")
+
+        except Exception as exc:
+            print(f"Video analysis failed: {exc}")
+            st.error(f"Failed to describe video: {exc}")
+
+        finally:
+            # Always delete temporary artifacts, even if model inference fails.
+            if video_path and os.path.exists(video_path):
+                os.remove(video_path)
+            for frame_file in frames:
+                if os.path.exists(frame_file):
+                    os.remove(frame_file)
+
+    if st.session_state.video_summary:
+        st.markdown("### Description of the video")
+        st.markdown(st.session_state.video_summary)
+else:
+    st.session_state.last_file_name = None
+    st.session_state.video_summary = None
