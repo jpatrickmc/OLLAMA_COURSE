@@ -9,7 +9,7 @@
 # 2. We extract frames from the video (OpenCV), e.g., one image every 2 seconds.
 # 3. We ask a Vision Model (Llava) to describe EACH frame individually.
 # 4. We collect all these descriptions into a single text block.
-# 5. We ask a Language Model (Llama 3) to summarize these descriptions into one coherent story.
+# 5. We ask a Language Model (Llama 2) to summarize these descriptions into one coherent story.
 #
 # Installation:
 # pip install opencv-python ollama streamlit
@@ -18,7 +18,7 @@
 # streamlit run video_describer.py
 
 import cv2          # For video processing (extracting frames)
-import ollama       # For AI (Llava for vision, Llama 3 for text)
+import ollama       # For AI (Llava for vision, Llama 2 for text)
 import streamlit as st  # For the Web UI
 import os           # For file path handling
 
@@ -118,12 +118,12 @@ if uploaded_file is not None:
         descriptions += f"\n{response['message']['content']}\n"
         # print(response['message']['content'])
 
-    # 5. Summarize with Llama 3
+    # 5. Summarize with Llama 2
     # We now have a list of disjointed descriptions.
-    # We ask Llama 3 to read them all and write a smooth summary.
+    # We ask Llama 2 to read them all and write a smooth summary.
     prompt = f"Write a general explaination about what is going on in the video by using the following descriptions of the frames of the video. \n {descriptions}"
     
-    answer = ollama.generate(model='llama3.1',
+    answer = ollama.generate(model='llama2',
                              prompt=prompt)
 
     # 6. Display Result
