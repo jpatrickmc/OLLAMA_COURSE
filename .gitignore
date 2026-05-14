@@ -40,6 +40,8 @@ wheels/
 
 # Logs
 *.log
+*.jpg
+*.jpeg
 
 # Testing
 .pytest_cache/
